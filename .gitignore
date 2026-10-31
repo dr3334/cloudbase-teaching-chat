@@ -39,3 +39,11 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# 构建与调试产物
+*.log
+*.apk
+/.refs
+/cmake-test2
+/e*.xml
+/u*.xml
