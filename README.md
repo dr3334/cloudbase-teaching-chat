@@ -80,6 +80,8 @@ npx expo run:android
 
 首次编译较慢。如果卡在 `:app:compressDebugAssets` 报临时文件被占用，直接重跑一次即可。
 
+> `android/` 属于 `expo prebuild` 的生成产物，没有纳入版本库；克隆后第一次执行上面的命令会自动生成再编译。
+
 ### 3. 日常开发
 
 ```bash
