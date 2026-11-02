@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+  type PanResponderInstance,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AssistantRuntimeProvider,
@@ -12,6 +20,7 @@ import { EditComposerRow, MessageRow } from '../chat/ChatParts';
 import { ComposerBar } from '../chat/ComposerBar';
 import { ModelPicker } from '../chat/ModelPicker';
 import { ThreadDrawer } from '../chat/ThreadDrawer';
+import { useDrawerGesture } from '../chat/useDrawerGesture';
 import { useThreadStats } from '../chat/useThreadStats';
 import { cds, font, gap, text } from '../cds/tokens';
 import { TopBar } from '../components/TopBar';
@@ -30,6 +39,8 @@ interface BodyProps {
   runtime: AssistantRuntime;
   configVersion: number;
   onMenu: () => void;
+  /** 消息区手势（右滑拉出抽屉），与抽屉共用 */
+  onSwipe: PanResponderInstance['panHandlers'];
   onSettings: () => void;
   onReset: () => void;
   onModelChange: (id: string) => void;
@@ -53,6 +64,7 @@ function ThreadBody({
   runtime,
   configVersion,
   onMenu,
+  onSwipe,
   onSettings,
   onReset,
   onModelChange,
@@ -87,14 +99,17 @@ function ThreadBody({
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <ThreadPrimitive.MessagesFlatList
-          autoScroll
-          components={{ Message: MessageRow, EditComposer: EditComposerRow }}
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          ListEmptyComponent={<EmptyState model={model} />}
-        />
+        {/* 消息区任意位置横向右滑，都能把抽屉拉出来 */}
+        <View style={styles.flex} {...onSwipe}>
+          <ThreadPrimitive.MessagesFlatList
+            autoScroll
+            components={{ Message: MessageRow, EditComposer: EditComposerRow }}
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={<EmptyState model={model} />}
+          />
+        </View>
 
         <View style={{ paddingBottom: Math.max(insets.bottom, gap.xs) }}>
           <ModelPicker
@@ -116,6 +131,14 @@ export function LiveChatScreen({ runtime, onBack }: Props) {
   const [model, setModel] = useState(getLlmConfig().model);
   const [models, setModels] = useState<string[]>(() => presetModels.map((item) => item.id));
   const [configVersion, setConfigVersion] = useState(0);
+
+  const { width } = useWindowDimensions();
+  const { progress, handlers } = useDrawerGesture({
+    open: drawerOpen,
+    panelWidth: Math.min(312, width * 0.84),
+    onOpen: () => setDrawerOpen(true),
+    onClose: () => setDrawerOpen(false),
+  });
 
   const handleModelChange = (id: string) => {
     if (id === model) return;
@@ -147,13 +170,15 @@ export function LiveChatScreen({ runtime, onBack }: Props) {
           configVersion={configVersion}
           onModelChange={handleModelChange}
           onMenu={() => setDrawerOpen(true)}
+          onSwipe={handlers}
           onSettings={() => setSettingsOpen(true)}
           onReset={() => runtime.thread.reset()}
         />
 
         <ThreadDrawer
           open={drawerOpen}
-          onOpen={() => setDrawerOpen(true)}
+          progress={progress}
+          pan={handlers}
           onClose={() => setDrawerOpen(false)}
           onExit={() => {
             setDrawerOpen(false);
