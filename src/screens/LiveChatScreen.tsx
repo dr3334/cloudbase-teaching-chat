@@ -153,6 +153,7 @@ export function LiveChatScreen({ runtime, onBack }: Props) {
 
         <ThreadDrawer
           open={drawerOpen}
+          onOpen={() => setDrawerOpen(true)}
           onClose={() => setDrawerOpen(false)}
           onExit={() => {
             setDrawerOpen(false);

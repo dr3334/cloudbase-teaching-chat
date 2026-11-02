@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import {
   Animated,
   Keyboard,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -20,10 +21,23 @@ import { cds, font, gap, radius, shadow } from '../cds/tokens';
 
 interface Props {
   open: boolean;
+  onOpen: () => void;
   onClose: () => void;
   /** 退出真实对话，回到入口页 */
   onExit: () => void;
 }
+
+/**
+ * 边缘滑动热区：Android 手势导航把最左侧约 16dp 划走做系统返回，
+ * 热区从 16dp 起算，避免右滑拉抽屉时被系统抢走。
+ */
+const EDGE_LEFT = 16;
+const EDGE_WIDTH = 30;
+/** 手势判定：横向位移占优才接管，避免抢列表滚动 */
+const shouldPan = (dx: number, dy: number) =>
+  Math.abs(dx) > 5 && Math.abs(dx) > Math.abs(dy) * 1.5;
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
 /** 单条会话：点击切换（按下即收起抽屉），右侧删除 */
 function ThreadItemRow({ onClose }: { onClose: () => void }) {
@@ -52,25 +66,72 @@ function ThreadItemRow({ onClose }: { onClose: () => void }) {
  * 左侧会话抽屉：新建 / 切换 / 删除历史对话。
  * 结构对标主流 chat app —— 常驻挂载，靠 translateX + 遮罩透明度做进出场。
  */
-export function ThreadDrawer({ open, onClose, onExit }: Props) {
+export function ThreadDrawer({ open, onOpen, onClose, onExit }: Props) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const panelWidth = Math.min(312, width * 0.84);
   const progress = useRef(new Animated.Value(0)).current;
 
-  // 抽屉铺满屏高，先把键盘收起来
-  useEffect(() => {
-    if (open) Keyboard.dismiss();
-  }, [open]);
+  // 供 PanResponder 读取最新值（它只创建一次，闭包会拿到旧值）
+  const openRef = useRef(open);
+  const widthRef = useRef(panelWidth);
+  const draggingRef = useRef(false);
+  const onOpenRef = useRef(onOpen);
+  const onCloseRef = useRef(onClose);
+  openRef.current = open;
+  widthRef.current = panelWidth;
+  onOpenRef.current = onOpen;
+  onCloseRef.current = onClose;
 
-  useEffect(() => {
+  const animateTo = (toOpen: boolean) => {
     Animated.timing(progress, {
-      toValue: open ? 1 : 0,
-      duration: open ? DURATION.sheet : DURATION.base,
-      easing: open ? EASE.out : EASE.snap,
+      toValue: toOpen ? 1 : 0,
+      duration: toOpen ? DURATION.sheet : DURATION.base,
+      easing: toOpen ? EASE.out : EASE.snap,
       useNativeDriver: true,
     }).start();
-  }, [open, progress]);
+  };
+
+  // 抽屉铺满屏高，先把键盘收起来；拖动中的状态变化交给手势自己收尾
+  useEffect(() => {
+    if (draggingRef.current) return;
+    if (open) Keyboard.dismiss();
+    animateTo(open);
+  }, [open]);
+
+  const panRef = useRef<ReturnType<typeof PanResponder.create> | null>(null);
+  if (!panRef.current) {
+    panRef.current = PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => shouldPan(g.dx, g.dy),
+      onPanResponderGrant: () => {
+        draggingRef.current = true;
+        progress.stopAnimation();
+      },
+      onPanResponderMove: (_, g) => {
+        const base = openRef.current ? widthRef.current : 0;
+        progress.setValue(clamp01((base + g.dx) / widthRef.current));
+      },
+      onPanResponderRelease: (_, g) => {
+        draggingRef.current = false;
+        const w = widthRef.current;
+        // 速度给一点加权，快速轻扫也能生效
+        const next = (openRef.current ? w : 0) + g.dx + g.vx * 45;
+        const shouldOpen = next > w * 0.42;
+
+        if (shouldOpen === openRef.current) {
+          animateTo(shouldOpen);
+          return;
+        }
+        if (shouldOpen) onOpenRef.current();
+        else onCloseRef.current();
+      },
+      onPanResponderTerminate: () => {
+        draggingRef.current = false;
+        animateTo(openRef.current);
+      },
+    });
+  }
+  const pan = panRef.current;
 
   const translateX = progress.interpolate({
     inputRange: [0, 1],
@@ -78,12 +139,15 @@ export function ThreadDrawer({ open, onClose, onExit }: Props) {
   });
 
   return (
-    <View
-      style={StyleSheet.absoluteFill}
-      pointerEvents={open ? 'box-none' : 'none'}
-    >
-      <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, { opacity: progress }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {/* 关闭态：从左边缘右滑拉出 */}
+      <View style={styles.edge} pointerEvents={open ? 'none' : 'auto'} {...pan.panHandlers} />
+
+      <Animated.View
+        style={[StyleSheet.absoluteFill, styles.scrim, { opacity: progress }]}
+        pointerEvents={open ? 'auto' : 'none'}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} {...pan.panHandlers} />
       </Animated.View>
 
       <Animated.View
@@ -95,6 +159,7 @@ export function ThreadDrawer({ open, onClose, onExit }: Props) {
             transform: [{ translateX }],
           },
         ]}
+        {...pan.panHandlers}
       >
         <View style={styles.head}>
           <Text style={styles.headTitle}>对话</Text>
@@ -134,6 +199,13 @@ export function ThreadDrawer({ open, onClose, onExit }: Props) {
 }
 
 const styles = StyleSheet.create({
+  edge: {
+    position: 'absolute',
+    left: EDGE_LEFT,
+    top: 0,
+    bottom: 0,
+    width: EDGE_WIDTH,
+  },
   scrim: { backgroundColor: 'rgba(21,21,21,0.32)' },
   panel: {
     position: 'absolute',
